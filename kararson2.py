@@ -77,6 +77,68 @@ def ping_atma():
 def tarihi_yazdir():
     return "Bugünün tarihi ve saati..."
 
+@app.route('/yes_no', methods=['POST'])
+def recognize_yes_no():
+    if 'audio' not in request.files:
+        return jsonify({"error": "Audio file is required"}), 400
+    
+    audio_file = request.files['audio']
+    if audio_file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+    
+    # Geçici bir dosya oluştur
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+        audio_path = temp_file.name
+        audio_file.save(audio_path)
+
+    output_path = audio_path.replace(".wav", "_converted.wav")
+
+    try:
+        # Soundfile ile sesi dönüştür
+        data, sample_rate = sf.read(audio_path)
+
+        # Eğer örnekleme hızı 16 kHz değilse, 16 kHz'e yeniden örnekle
+        if sample_rate != 16000:
+            new_sample_rate = 16000
+            data = np.interp(
+                np.linspace(0, 1, int(len(data) * new_sample_rate / sample_rate)),
+                np.linspace(0, 1, len(data)),
+                data
+            )
+            sample_rate = new_sample_rate
+
+        # Dönüştürülmüş dosyayı yaz
+        sf.write(output_path, data, sample_rate)
+        
+        # SpeechRecognition ile sesi metne çevir
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(output_path) as source:
+            audio_data = recognizer.record(source)  # Tüm sesi al
+            text = recognizer.recognize_google(audio_data, language='tr-TR')  # Türkçe dil desteği
+
+    except sr.UnknownValueError:
+        return jsonify({"error": "Sesi anlayamadım, lütfen tekrar deneyin."}), 400
+    except sr.RequestError:
+        return jsonify({"error": "Tanıma servisine bağlanırken bir hata oluştu."}), 500
+    except Exception as e:
+        return jsonify({"error": "Audio conversion failed: " + str(e)}), 500
+    finally:
+        # Geçici dosyayı sil
+        os.remove(audio_path)
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+    # Evet veya hayır kontrolü
+    text = text.strip().lower()
+    
+    if 'evet' in text:
+        return jsonify({"response": "Evet olarak algılandı."})
+    elif 'hayır' in text:
+        return jsonify({"response": "Hayır olarak algılandı."})
+    else:
+        return jsonify({"error": "Yanıt anlaşılmadı. Lütfen tekrar söyler misiniz?"}), 400
+
+
 @app.route('/convert', methods=['POST'])
 def convert_audio_to_text():
     if 'audio' not in request.files:
